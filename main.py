@@ -9,9 +9,10 @@ st.set_page_config(page_title="Sales Data Dashboard", layout="wide")
 st.title("📊 Sales Data Foundation Dashboard")
 st.write("আপনার সেলস ডাটা ক্লিন, রিশেপ এবং কোয়ালিটি অ্যানালাইসিস করার ওয়েব অ্যাপ।")
 
-# পাথ সেটআপ
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# আগের parent.parent কেটে শুধু .parent দিন
+PROJECT_ROOT = Path(__file__).resolve().parent
 INPUT_FILE = PROJECT_ROOT / "data" / "Sales_Data.xlsx"
+
 
 META_COLS = ["ID", "Sales Person (Sales Team)", "Coordinators", "Customer Name", "Customer Group", "Zone"]
 TAIL_COLS = ["Total Yearly Target 26", "Total Achievement jan to june ", "Achievment%"]
