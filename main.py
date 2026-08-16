@@ -1,97 +1,55 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-from pathlib import Path
-import io
+import plotly.express as px
 
-st.set_page_config(page_title="Sales Data Dashboard", layout="wide")
+# অ্যাপের শিরোনাম
+st.set_page_config(page_title="Sales Analysis Dashboard", layout="wide")
+st.title("🚀 Company Growth & Sales Analytics")
 
-st.title("📊 Sales Data Foundation Dashboard")
-st.write("আপনার সেলস ডাটা ক্লিন, রিশেপ এবং কোয়ালিটি অ্যানালাইসিস করার ওয়েব অ্যাপ।")
-
-# আগের parent.parent কেটে শুধু .parent দিন
-PROJECT_ROOT = Path(__file__).resolve().parent
-INPUT_FILE = PROJECT_ROOT / "data" / "Sales_Data.xlsx"
-
-
-META_COLS = ["ID", "Sales Person (Sales Team)", "Coordinators", "Customer Name", "Customer Group", "Zone"]
-TAIL_COLS = ["Total Yearly Target 26", "Total Achievement jan to june ", "Achievment%"]
-
-# ফাংশনসমূহ (আপনার মূল কোড থেকে নেওয়া)
-def reshape_to_long(df: pd.DataFrame) -> pd.DataFrame:
-    cols = list(df.columns)
-    brand_block = [c for c in cols if c not in META_COLS and c not in TAIL_COLS]
-    records = []
-    for i in range(0, len(brand_block), 3):
-        if i+2 < len(brand_block):
-            brand_col, ach_col, achpct_col = brand_block[i], brand_block[i + 1], brand_block[i + 2]
-            tmp = df[META_COLS + [brand_col, ach_col, achpct_col]].copy()
-            tmp.columns = META_COLS + ["Target", "Achievement", "Achievement_pct"]
-            tmp["Brand"] = brand_col.strip()
-            records.append(tmp)
-    long_df = pd.concat(records, ignore_index=True)
-    return long_df[META_COLS + ["Brand", "Target", "Achievement", "Achievement_pct"]]
-
-def add_flags(long_df: pd.DataFrame) -> pd.DataFrame:
-    df = long_df.copy()
-    df["has_target"] = df["Target"].notna() & (df["Target"] > 0)
-    df["has_achievement"] = df["Achievement"].notna() & (df["Achievement"] > 0)
-    df["activity_flag"] = np.where(df["has_target"] | df["has_achievement"], "has_activity", "no_activity")
-    df["target_gap_flag"] = (~df["has_target"]) & df["has_achievement"]
-    df["negative_value_flag"] = (df["Target"] < 0) | (df["Achievement"] < 0)
+# ডেটা লোড করার ফাংশন
+@st.cache_data
+def load_data():
+    # CSV ফাইলটি আপনার প্রজেক্ট ফোল্ডারে থাকতে হবে
+    df = pd.read_csv("Sales_Data.csv")
+    
+    # ডেটা ক্লিনিং: সংখ্যাগুলোকে ফ্লোটে রূপান্তর করা (কমা এবং চিহ্ন সরিয়ে)
+    cols_to_clean = ['Total Yearly Target 26', 'Total Achievement jan to june']
+    for col in cols_to_clean:
+        df[col] = df[col].astype(str).str.replace(',', '').str.replace('(', '').str.replace(')', '').replace('nan', '0')
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+    
     return df
 
-def build_customer_master(long_df: pd.DataFrame) -> pd.DataFrame:
-    master = long_df.drop_duplicates(subset=["ID"])[META_COLS].reset_index(drop=True)
-    totals = long_df.groupby("ID").agg(
-        Total_Target=("Target", "sum"),
-        Total_Achievement=("Achievement", "sum"),
-        N_brands_active=("activity_flag", lambda x: (x == "has_activity").sum()),
-    ).reset_index()
-    master = master.merge(totals, on="ID", how="left")
-    master["is_zero_achiever"] = (master["Total_Target"] > 0) & (master["Total_Achievement"].fillna(0) == 0)
-    return master
+df = load_data()
 
-# ডাটা লোড ও প্রসেস পার্ট
-if INPUT_FILE.exists():
-    try:
-        df = pd.read_excel(INPUT_FILE)
-        
-        # প্রসেসিং
-        long_df = reshape_to_long(df)
-        long_df = add_flags(long_df)
-        master = build_customer_master(long_df)
-        
-        clean_activity = long_df[long_df["activity_flag"] == "has_activity"].copy()
-        target_gap_list = long_df[long_df["target_gap_flag"]].sort_values("Achievement", ascending=False)
-        zero_achievers = master[master["is_zero_achiever"]].sort_values("Total_Target", ascending=False)
-        
-        # --- স্ট্রিমলাইট ইন্টারফেস লেআউট ---
-        tabs = st.tabs(["📋 কোয়ালিটি রিপোর্ট", "⚠️ টার্গেট গ্যাপ লিস্ট", "🎯 জিরো অ্যাচিভার্স", "👥 কাস্টমার মাস্টার"])
-        
-        with tabs[0]:
-            st.header("Data Quality Metrics")
-            col1, col2, col3 = st.columns(3)
-            col1.metric("মোট কাস্টমার-ব্র্যান্ড কম্বিনেশন", len(long_df))
-            col2.metric("টার্গেট গ্যাপ রো (Sale আছে টার্গেট নেই)", long_df["target_gap_flag"].sum())
-            col3.metric("মোট ইউনিক কাস্টমার", master["ID"].nunique())
-            
-            st.subheader("অ্যাক্টিভিটি ডাটা প্রিভিউ")
-            st.dataframe(clean_activity.head(100), use_container_width=True)
-            
-        with tabs[1]:
-            st.header("Target Gap List (বিক্রি হয়েছে কিন্তু টার্গেট ছিল না)")
-            st.dataframe(target_gap_list[["Customer Name", "Sales Person (Sales Team)", "Zone", "Brand", "Achievement"]], use_container_width=True)
-            
-        with tabs[2]:
-            st.header("Zero Achievers (টার্গেট আছে কিন্তু বিক্রি শূন্য)")
-            st.dataframe(zero_achievers[["Customer Name", "Sales Person (Sales Team)", "Zone", "Total_Target"]], use_container_width=True)
-            
-        with tabs[3]:
-            st.header("Customer Master Table")
-            st.dataframe(master, use_container_width=True)
+# --- সাইডবার ফিল্টার ---
+st.sidebar.header("Filter Data")
+selected_zone = st.sidebar.multiselect("Select Zone", options=df["Zone"].unique(), default=df["Zone"].unique())
 
-    except Exception as e:
-        st.error(f"ডাটা প্রসেস করতে সমস্যা হয়েছে: {e}")
-else:
-    st.warning(f"আপনার প্রজেক্টের `data/` ফোল্ডারে `Sales_Data.xlsx` ফাইলটি খুঁজে পাওয়া যায়নি। অনুগ্রহ করে ফাইলটি সঠিক জায়গায় রাখুন।")
+filtered_df = df[df["Zone"].isin(selected_zone)]
+
+# --- কি-মেট্রিক্স (Key Metrics) ---
+total_target = filtered_df["Total Yearly Target 26"].sum()
+total_ach = filtered_df["Total Achievement jan to june"].sum()
+avg_ach_perf = (total_ach / total_target) * 100 if total_target > 0 else 0
+
+col1, col2, col3 = st.columns(3)
+col1.metric("Total Yearly Target", f"৳{total_target:,.0f}")
+col2.metric("Total Achievement (Jan-Jun)", f"৳{total_ach:,.0f}")
+col3.metric("Overall Performance (%)", f"{avg_ach_perf:.2f}%")
+
+# --- জোনভিত্তিক পারফরম্যান্স গ্রাফ ---
+st.subheader("📊 Zone-wise Sales Achievement")
+zone_data = filtered_df.groupby("Zone")["Total Achievement jan to june"].sum().reset_index()
+fig = px.bar(zone_data, x="Zone", y="Total Achievement jan to june", color="Zone", title="Sales by Zone")
+st.plotly_chart(fig, use_container_width=True)
+
+# --- কাস্টমার এনালাইসিস টেবিল ---
+st.subheader("🔍 Customer Performance Detail")
+st.dataframe(filtered_df[["Customer Name", "Zone", "Total Yearly Target 26", "Total Achievement jan to june", "Achievment%"]])
+
+# --- 'জিরো সেল' কাস্টমার এলার্ট ---
+zero_sales_customers = filtered_df[filtered_df["Total Achievement jan to june"] == 0]
+st.warning(f"⚠️ There are {len(zero_sales_customers)} customers with ZERO sales in selected zones!")
+if st.button("Show Zero Sales List"):
+    st.write(zero_sales_customers[["Customer Name", "Sales Person (Sales Team)", "Total Yearly Target 26"]])
