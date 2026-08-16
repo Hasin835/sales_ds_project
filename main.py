@@ -11,7 +11,6 @@ import os
 # ============================================================
 st.set_page_config(
     page_title="Sales Intelligence Dashboard",
-    page_icon="🚀",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -328,4 +327,3 @@ with tab4:
             "Achievement_%": st.column_config.NumberColumn("Achievement_%", format="%.1f%%"),
         },
     )
-    
