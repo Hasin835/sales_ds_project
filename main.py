@@ -37,7 +37,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚀 Company Growth & Sales Intelligence Dashboard")
+st.title(" Company Growth & Sales Intelligence Dashboard")
 st.caption("Target vs Achievement • Zone Performance • ML-based Customer Segmentation")
 
 PLOTLY_TEMPLATE = "plotly_dark"
