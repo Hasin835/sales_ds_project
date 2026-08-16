@@ -259,12 +259,14 @@ with tab2:
         Avg_Achievement_pct=("Achievement_%", "mean"),
     ).reindex(segment_names).dropna(how="all").reset_index()
     st.dataframe(
-        seg_summary.style.format({
-            "Total_Target": "৳{:,.0f}",
-            "Total_Achievement": "৳{:,.0f}",
-            "Avg_Achievement_pct": "{:.1f}%",
-        }),
-        use_container_width=True
+        seg_summary,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Total_Target": st.column_config.NumberColumn("Total_Target", format="৳%,.0f"),
+            "Total_Achievement": st.column_config.NumberColumn("Total_Achievement", format="৳%,.0f"),
+            "Avg_Achievement_pct": st.column_config.NumberColumn("Avg_Achievement_pct", format="%.1f%%"),
+        },
     )
 
 # ---------- Tab 3: Sales Team Performance ----------
@@ -284,12 +286,17 @@ with tab3:
     leaderboard.index = leaderboard.index + 1
 
     st.dataframe(
-        leaderboard.style.format({
-            "Total_Target": "৳{:,.0f}",
-            "Total_Achievement": "৳{:,.0f}",
-            "Achievement_%": "{:.1f}%",
-        }).background_gradient(subset=["Achievement_%"], cmap="Greens"),
-        use_container_width=True
+        leaderboard,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Total_Target": st.column_config.NumberColumn("Total_Target", format="৳%,.0f"),
+            "Total_Achievement": st.column_config.NumberColumn("Total_Achievement", format="৳%,.0f"),
+            "Achievement_%": st.column_config.ProgressColumn(
+                "Achievement_%", format="%.1f%%", min_value=0,
+                max_value=max(150, float(leaderboard["Achievement_%"].max() or 0)),
+            ),
+        },
     )
 
     st.subheader("📉 টপ ১০ সেলস পারসন (অর্জন অনুযায়ী)")
@@ -310,13 +317,15 @@ with tab4:
         target_col, ach_col, "Achievement_%", "Gap", "Segment_Name"
     ]
     st.dataframe(
-        filtered_df[display_cols].style.format({
-            target_col: "৳{:,.0f}",
-            ach_col: "৳{:,.0f}",
-            "Gap": "৳{:,.0f}",
-            "Achievement_%": "{:.1f}%",
-        }),
+        filtered_df[display_cols],
         use_container_width=True,
+        hide_index=True,
         height=500,
+        column_config={
+            target_col: st.column_config.NumberColumn(target_col, format="৳%,.0f"),
+            ach_col: st.column_config.NumberColumn(ach_col, format="৳%,.0f"),
+            "Gap": st.column_config.NumberColumn("Gap", format="৳%,.0f"),
+            "Achievement_%": st.column_config.NumberColumn("Achievement_%", format="%.1f%%"),
+        },
     )
     
