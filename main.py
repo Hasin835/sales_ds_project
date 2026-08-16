@@ -6,7 +6,7 @@ import os
 
 # ১. অ্যাপ কনফিগারেশন
 st.set_page_config(page_title="Sales Intelligence Dashboard", layout="wide")
-st.title("🚀 Company Growth & Sales Intelligence Dashboard")
+st.title("Company Growth & Sales Intelligence Dashboard")
 
 # ২. ডেটা লোড এবং রোবাস্ট ক্লিনিং ফাংশন
 @st.cache_data
