@@ -44,14 +44,14 @@ PLOTLY_TEMPLATE = "plotly_dark"
 COLOR_SEQ = px.colors.qualitative.Set2
 
 # ============================================================
-# ২. ডেটা লোড এবং রোবাস্ট ক্লিনিং ফাংশন
+# ২. ডেটা লোড এবং রোবাস্ট ক্লিনিং ফাংশন (data quality flags সহ)
 # ============================================================
 @st.cache_data
 def load_data():
     file_path = "data/Sales_Data.csv"
 
     if not os.path.exists(file_path):
-        st.error(f"Error: '{file_path}' ফাইলটি খুঁজে পাওয়া যায়নি। GitHub-এ 'data' ফোল্ডারের ভেতর ফাইলটি আছে কি না নিশ্চিত করুন।")
+        st.error(f"Error: '{file_path}' ফাইলটি খুঁজে পাওয়া যায়নি।")
         st.stop()
 
     df = pd.read_csv(file_path)
@@ -59,7 +59,7 @@ def load_data():
 
     def clean_currency(value):
         if pd.isna(value) or value == "":
-            return 0.0
+            return np.nan
         value = str(value).replace(',', '').strip()
         if '(' in value and ')' in value:
             value = "-" + value.replace('(', '').replace(')', '')
@@ -73,19 +73,81 @@ def load_data():
         st.write("ফাইলে থাকা কলামগুলো হলো:", list(df.columns))
         st.stop()
 
-    df[target_col] = df[target_col].apply(clean_currency).fillna(0)
-    df[ach_col] = df[ach_col].apply(clean_currency).fillna(0)
+    df[target_col] = df[target_col].apply(clean_currency)
+    df[ach_col] = df[ach_col].apply(clean_currency)
 
-    # অ্যাচিভমেন্ট % (division-by-zero সেফলি হ্যান্ডেল করা)
+    # ---- DATA QUALITY FLAGS (fillna(0) করার আগেই বানানো, তাই real missing ধরা পড়ে) ----
+    df['has_target'] = df[target_col].notna() & (df[target_col] > 0)
+    df['has_achievement'] = df[ach_col].notna() & (df[ach_col] > 0)
+    df['target_gap_flag'] = (~df['has_target']) & df['has_achievement']       # sale ache, target nei
+    df['zero_achiever_flag'] = df['has_target'] & (~df['has_achievement'])    # target ache, sale nei
+    df['negative_flag'] = (df[target_col] < 0) | (df[ach_col] < 0)
+
+    if 'ID' in df.columns:
+        df['duplicate_id_flag'] = df['ID'].duplicated(keep=False)
+    else:
+        df['duplicate_id_flag'] = False
+
+    # flags বসানোর পর এখন fillna(0) করছি
+    df[target_col] = df[target_col].fillna(0)
+    df[ach_col] = df[ach_col].fillna(0)
+
     df['Achievement_%'] = np.where(
-        df[target_col] > 0,
+        df['has_target'],
         (df[ach_col] / df[target_col]) * 100,
-        0
+        np.nan
     ).round(1)
 
     df['Gap'] = df[target_col] - df[ach_col]
 
     return df
+
+
+def render_data_quality_tab(filtered_df, target_col, ach_col):
+    st.subheader("🔍 Data Quality Report")
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Target-Gap rows", int(filtered_df['target_gap_flag'].sum()))
+    c2.metric("Zero-Achiever customers", int(filtered_df['zero_achiever_flag'].sum()))
+    c3.metric("Negative-value rows", int(filtered_df['negative_flag'].sum()))
+    c4.metric("Duplicate ID rows", int(filtered_df['duplicate_id_flag'].sum()))
+
+    st.markdown("---")
+    st.subheader("🎯 Target-Gap List — sale আছে কিন্তু target set হয়নি")
+    gap_df = filtered_df[filtered_df['target_gap_flag']].sort_values(ach_col, ascending=False)
+    st.caption(f"মোট untargeted sales value: ৳{gap_df[ach_col].sum():,.0f}")
+    st.dataframe(
+        gap_df[["Customer Name", "Sales Person (Sales Team)", "Zone", ach_col]],
+        use_container_width=True, hide_index=True,
+        column_config={ach_col: st.column_config.NumberColumn(ach_col, format="৳%,.0f")}
+    )
+
+    st.markdown("---")
+    st.subheader("💤 Zero-Achiever List — target আছে কিন্তু sale নেই")
+    zero_df = filtered_df[filtered_df['zero_achiever_flag']].sort_values(target_col, ascending=False)
+    st.caption(f"মোট stuck target value: ৳{zero_df[target_col].sum():,.0f}")
+    st.dataframe(
+        zero_df[["Customer Name", "Sales Person (Sales Team)", "Zone", target_col]],
+        use_container_width=True, hide_index=True,
+        column_config={target_col: st.column_config.NumberColumn(target_col, format="৳%,.0f")}
+    )
+
+    if filtered_df['negative_flag'].sum() > 0:
+        st.markdown("---")
+        st.subheader("⚠️ Negative Value Rows")
+        st.dataframe(
+            filtered_df[filtered_df['negative_flag']][["Customer Name", target_col, ach_col]],
+            use_container_width=True, hide_index=True
+        )
+
+    if filtered_df['duplicate_id_flag'].sum() > 0:
+        st.markdown("---")
+        st.subheader("⚠️ Duplicate Customer ID")
+        st.dataframe(
+            filtered_df[filtered_df['duplicate_id_flag']][["ID", "Customer Name"]],
+            use_container_width=True, hide_index=True
+        )
+
 
 df = load_data()
 target_col = 'Total Yearly Target 26'
@@ -144,7 +206,7 @@ if filtered_df.empty:
 total_target = filtered_df[target_col].sum()
 total_ach = filtered_df[ach_col].sum()
 overall_pct = (total_ach / total_target * 100) if total_target > 0 else 0
-zero_sales = filtered_df[filtered_df[ach_col] == 0]
+zero_sales = filtered_df[filtered_df['zero_achiever_flag']]   # <-- fix: age target=0 customer o dhorto, ekhon thik
 
 top_zone = filtered_df.groupby("Zone")[ach_col].sum().idxmax() if not filtered_df.empty else "-"
 top_person_series = filtered_df.groupby("Sales Person (Sales Team)")[ach_col].sum()
@@ -160,10 +222,10 @@ k5.metric("সেরা সেলস পারসন", top_person)
 st.markdown("---")
 
 # ============================================================
-# ৬. ট্যাব-ভিত্তিক লেআউট
+# ৬. ট্যাব-ভিত্তিক লেআউট (৫টা tab — Data Quality নতুন যোগ হয়েছে)
 # ============================================================
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📊 ওভারভিউ", "🤖 সেগমেন্টেশন", "🧑‍💼 সেলস টিম পারফরম্যান্স", "📋 বিস্তারিত ডেটা"
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "📊 ওভারভিউ", "🤖 সেগমেন্টেশন", "🧑‍💼 সেলস টিম পারফরম্যান্স", "📋 বিস্তারিত ডেটা", "🔍 Data Quality"
 ])
 
 # ---------- Tab 1: Overview ----------
@@ -327,3 +389,7 @@ with tab4:
             "Achievement_%": st.column_config.NumberColumn("Achievement_%", format="%.1f%%"),
         },
     )
+
+# ---------- Tab 5: Data Quality ----------
+with tab5:
+    render_data_quality_tab(filtered_df, target_col, ach_col)
