@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from sklearn.cluster import KMeans
 import os
 
 # ============================================================
@@ -38,7 +37,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title(" Company Growth & Sales Intelligence Dashboard")
-st.caption("Target vs Achievement • Zone Performance • ML-based Customer Segmentation")
+st.caption("Target vs Achievement • Zone Performance • Business-Rule Customer Segmentation")
 
 PLOTLY_TEMPLATE = "plotly_dark"
 COLOR_SEQ = px.colors.qualitative.Set2
@@ -76,11 +75,11 @@ def load_data():
     df[target_col] = df[target_col].apply(clean_currency)
     df[ach_col] = df[ach_col].apply(clean_currency)
 
-    # ---- DATA QUALITY FLAGS (fillna(0) করার আগেই বানানো, তাই real missing ধরা পড়ে) ----
+    # ---- DATA QUALITY FLAGS (fillna(0) করার আগেই বানানো) ----
     df['has_target'] = df[target_col].notna() & (df[target_col] > 0)
     df['has_achievement'] = df[ach_col].notna() & (df[ach_col] > 0)
-    df['target_gap_flag'] = (~df['has_target']) & df['has_achievement']       # sale ache, target nei
-    df['zero_achiever_flag'] = df['has_target'] & (~df['has_achievement'])    # target ache, sale nei
+    df['target_gap_flag'] = (~df['has_target']) & df['has_achievement']
+    df['zero_achiever_flag'] = df['has_target'] & (~df['has_achievement'])
     df['negative_flag'] = (df[target_col] < 0) | (df[ach_col] < 0)
 
     if 'ID' in df.columns:
@@ -88,7 +87,6 @@ def load_data():
     else:
         df['duplicate_id_flag'] = False
 
-    # flags বসানোর পর এখন fillna(0) করছি
     df[target_col] = df[target_col].fillna(0)
     df[ach_col] = df[ach_col].fillna(0)
 
@@ -154,26 +152,48 @@ target_col = 'Total Yearly Target 26'
 ach_col = 'Total Achievement jan to june'
 
 # ============================================================
-# ৩. মেশিন লার্নিং: কাস্টমার সেগমেন্টেশন (Clustering)
+# ৩. কাস্টমার সেগমেন্টেশন — Business-Rule / Quadrant Based (STEP 2)
+#    আগের generic Silver/Gold/Platinum KMeans-এর বদলে এখন ৪টা
+#    business-meaningful segment: Star Performer, Sleeping Giant,
+#    Small but Reliable, At-Risk — যাদের target set-ই হয়নি তাদের
+#    আলাদা "No Target Set" গ্রুপে রাখা হয়েছে।
 # ============================================================
-X = df[[target_col, ach_col]]
-kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
-df['Segment_ID'] = kmeans.fit_predict(X)
+target_median = df.loc[df['has_target'], target_col].median()
 
-cluster_order = (
-    df.groupby('Segment_ID')[ach_col]
-    .mean()
-    .sort_values()
-    .index.tolist()
-)
-segment_names = ["Silver (Low)", "Gold (Mid)", "Platinum (High)"]
-segment_map = {cid: name for cid, name in zip(cluster_order, segment_names)}
-df['Segment_Name'] = df['Segment_ID'].map(segment_map)
+def assign_segment(row):
+    if not row['has_target']:
+        return "⚪ No Target Set"
+    ach_pct = row['Achievement_%'] if pd.notna(row['Achievement_%']) else 0
+    is_high_target = row[target_col] >= target_median
+    if is_high_target and ach_pct >= 60:
+        return "⭐ Star Performer"
+    elif is_high_target and ach_pct < 40:
+        return "💤 Sleeping Giant"
+    elif (not is_high_target) and ach_pct >= 60:
+        return "🔹 Small but Reliable"
+    else:
+        return "⚠️ At-Risk / Needs Attention"
 
+df['Segment_Name'] = df.apply(assign_segment, axis=1)
+
+segment_names = [
+    "⭐ Star Performer", "💤 Sleeping Giant",
+    "🔹 Small but Reliable", "⚠️ At-Risk / Needs Attention", "⚪ No Target Set"
+]
 SEGMENT_COLORS = {
-    "Silver (Low)": "#9aa5b1",
-    "Gold (Mid)": "#e5b567",
-    "Platinum (High)": "#7ee8c7",
+    "⭐ Star Performer": "#7ee8c7",
+    "💤 Sleeping Giant": "#e57373",
+    "🔹 Small but Reliable": "#82b1ff",
+    "⚠️ At-Risk / Needs Attention": "#e5b567",
+    "⚪ No Target Set": "#9aa5b1",
+}
+
+SEGMENT_DESCRIPTIONS = {
+    "⭐ Star Performer": "High target, 60%+ achievement — protect ও upsell করার customer।",
+    "💤 Sleeping Giant": "High target, কিন্তু 40%-এর নিচে achievement — urgent attention দরকার।",
+    "🔹 Small but Reliable": "Low target, কিন্তু reliably 60%+ achieve করছে — cross-sell সুযোগ আছে।",
+    "⚠️ At-Risk / Needs Attention": "Low target এবং achievement-ও মাঝারি/কম — নজরে রাখা দরকার।",
+    "⚪ No Target Set": "এই customer-দের target-ই set করা হয়নি (নতুন customer/data gap)।",
 }
 
 # ============================================================
@@ -182,7 +202,11 @@ SEGMENT_COLORS = {
 st.sidebar.header("🔍 ফিল্টার অপশন")
 zones = st.sidebar.multiselect("জোন নির্বাচন করুন", options=df["Zone"].unique(), default=df["Zone"].unique())
 sales_persons = st.sidebar.multiselect("সেলস পারসন নির্বাচন করুন", options=df["Sales Person (Sales Team)"].unique())
-segments = st.sidebar.multiselect("সেগমেন্ট নির্বাচন করুন", options=df["Segment_Name"].unique(), default=df["Segment_Name"].unique())
+segments = st.sidebar.multiselect(
+    "সেগমেন্ট নির্বাচন করুন",
+    options=[s for s in segment_names if s in df["Segment_Name"].unique()],
+    default=[s for s in segment_names if s in df["Segment_Name"].unique()]
+)
 
 filtered_df = df[df["Zone"].isin(zones) & df["Segment_Name"].isin(segments)]
 if sales_persons:
@@ -206,7 +230,7 @@ if filtered_df.empty:
 total_target = filtered_df[target_col].sum()
 total_ach = filtered_df[ach_col].sum()
 overall_pct = (total_ach / total_target * 100) if total_target > 0 else 0
-zero_sales = filtered_df[filtered_df['zero_achiever_flag']]   # <-- fix: age target=0 customer o dhorto, ekhon thik
+zero_sales = filtered_df[filtered_df['zero_achiever_flag']]
 
 top_zone = filtered_df.groupby("Zone")[ach_col].sum().idxmax() if not filtered_df.empty else "-"
 top_person_series = filtered_df.groupby("Sales Person (Sales Team)")[ach_col].sum()
@@ -222,7 +246,7 @@ k5.metric("সেরা সেলস পারসন", top_person)
 st.markdown("---")
 
 # ============================================================
-# ৬. ট্যাব-ভিত্তিক লেআউট (৫টা tab — Data Quality নতুন যোগ হয়েছে)
+# ৬. ট্যাব-ভিত্তিক লেআউট
 # ============================================================
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📊 ওভারভিউ", "🤖 সেগমেন্টেশন", "🧑‍💼 সেলস টিম পারফরম্যান্স", "📋 বিস্তারিত ডেটা", "🔍 Data Quality"
@@ -288,22 +312,28 @@ with tab1:
 
 # ---------- Tab 2: Segmentation ----------
 with tab2:
+    st.subheader("🤖 কাস্টমার সেগমেন্টেশন (Business-Rule Based)")
+    st.caption(
+        f"Target median: ৳{target_median:,.0f} দিয়ে High/Low target ভাগ করা হয়েছে, "
+        f"Achievement% দিয়ে performance ভাগ করা হয়েছে (60%+ = ভালো, 40%-এর কম = ঝুঁকিতে)।"
+    )
+
     c1, c2 = st.columns([2, 1])
 
     with c1:
-        st.subheader("🤖 কাস্টমার সেগমেন্টেশন (Machine Learning)")
         fig_cluster = px.scatter(
             filtered_df, x=target_col, y=ach_col,
             color="Segment_Name", hover_name="Customer Name", size=ach_col,
             labels={target_col: "Yearly Target (৳)", ach_col: "Achievement (৳)"},
             template=PLOTLY_TEMPLATE, color_discrete_map=SEGMENT_COLORS,
+            category_orders={"Segment_Name": segment_names},
         )
         fig_cluster.update_layout(height=420, legend_title=None, margin=dict(t=20, b=10))
         st.plotly_chart(fig_cluster, use_container_width=True)
 
     with c2:
         st.subheader("🧩 সেগমেন্ট ব্রেকডাউন")
-        seg_counts = filtered_df["Segment_Name"].value_counts().reset_index()
+        seg_counts = filtered_df["Segment_Name"].value_counts().reindex(segment_names).dropna().reset_index()
         seg_counts.columns = ["Segment", "Count"]
         fig_pie = px.pie(
             seg_counts, names="Segment", values="Count", hole=0.55,
@@ -329,6 +359,12 @@ with tab2:
             "Avg_Achievement_pct": st.column_config.NumberColumn("Avg_Achievement_pct", format="%.1f%%"),
         },
     )
+
+    st.markdown("---")
+    st.subheader("📖 সেগমেন্টের সংজ্ঞা")
+    for seg in segment_names:
+        if seg in filtered_df["Segment_Name"].unique():
+            st.markdown(f"**{seg}** — {SEGMENT_DESCRIPTIONS[seg]}")
 
 # ---------- Tab 3: Sales Team Performance ----------
 with tab3:
